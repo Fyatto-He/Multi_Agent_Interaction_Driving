@@ -1,0 +1,34 @@
+[project]
+name = "dfadrive"
+version = "0.1.0"
+description = "Multi-agent driving with one task automaton per vehicle (research prototype)."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # MetaDrive main @ 85e5dad (2025-05-11). Pinned by commit: the PyPI 0.4.3 wheel has a
+    # braking issue (vehicles may not come to a full stop) that this commit fixes.
+    "metadrive-simulator @ https://github.com/metadriverse/metadrive/archive/85e5dadc6c7436d324348f6e3d8f8e680c06b4db.zip",
+    "dfa==4.7.1",
+    "numpy>=1.26",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+scenic = ["scenic==3.1.1"]
+viz = ["matplotlib>=3.8"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dfadrive*"]
+
+[tool.setuptools.package-data]
+dfadrive = ["scenarios/*.scenic"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["sim: needs the MetaDrive simulator (slower)"]
+filterwarnings = ["ignore::DeprecationWarning"]

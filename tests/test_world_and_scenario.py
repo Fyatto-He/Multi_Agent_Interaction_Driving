@@ -1,0 +1,72 @@
+import math
+
+import numpy as np
+import pytest
+
+from dfadrive.scenario import PythonSampler, ScenarioInstance, make_sampler
+from dfadrive.style import style_params
+from dfadrive.world import AgentState, ConflictGeometry, Route
+
+
+def straight(p, q, n=50):
+    return Route(np.linspace(p, q, n), lane_width=3.5)
+
+
+def car(x, y, heading, route, **kw):
+    return AgentState(x=x, y=y, heading=heading, speed=5.0, length=4.5, width=1.8, s=route.project(x, y), **kw)
+
+
+def test_route_coordinates():
+    r = straight((0, 0), (100, 0))
+    assert r.length == pytest.approx(100)
+    assert r.project(30, 2) == pytest.approx(30)
+    assert r.lateral(30, 2) == pytest.approx(2)  # left of travel is positive
+    assert r.heading(50) == pytest.approx(0)
+
+
+def test_conflict_zone_of_a_right_angle_crossing():
+    routes = {"A": straight((0, 0), (100, 0)), "B": straight((50, 50), (50, -50))}
+    g = ConflictGeometry.from_routes(routes)
+    assert g.zone.area == pytest.approx(3.5 * 3.5)
+    assert g.entry_s["A"] == pytest.approx(48.25) and g.exit_s["A"] == pytest.approx(51.75)
+    a_before = car(40, 0, 0.0, routes["A"])
+    assert not g.occupies(a_before) and g.dist_to_entry("A", a_before) == pytest.approx(48.25 - 42.25)
+    assert g.occupies(car(50, 0, 0.0, routes["A"]))
+    a_after = car(56, 0, 0.0, routes["A"])
+    assert not g.occupies(a_after) and g.dist_to_clear("A", a_after) < 0
+    assert not g.occupies(car(50, 0, 0.0, routes["A"], arrived=True))  # an arrived car is gone
+
+
+def test_parallel_routes_do_not_conflict():
+    with pytest.raises(ValueError):
+        ConflictGeometry.from_routes({"A": straight((0, 0), (100, 0)), "B": straight((100, 3.5), (0, 3.5))})
+
+
+def test_style_is_monotone():
+    lo, hi = style_params(0.0), style_params(1.0)
+    assert lo.cruise_speed < hi.cruise_speed and lo.max_accel < hi.max_accel
+    assert lo.comfort_decel < hi.comfort_decel and lo.commit_margin > hi.commit_margin
+    with pytest.raises(ValueError):
+        style_params(1.5)
+
+
+@pytest.mark.parametrize("kind", ["python", "scenic"])
+def test_sampler_is_deterministic_and_respects_constraints(kind):
+    if kind == "scenic":
+        pytest.importorskip("scenic")
+    sampler = make_sampler(kind, task_A="GO_FIRST", style_B=0.25)
+    assert sampler.sample(3) == sampler.sample(3)
+    assert sampler.sample(3) != sampler.sample(4)
+    for seed in range(30):
+        inst = sampler.sample(seed)
+        a, b = inst.agents["A"], inst.agents["B"]
+        assert inst.sampler == kind and a.task == "GO_FIRST" and b.task == "YIELD" and b.style == 0.25
+        assert 25 <= a.distance_to_conflict <= 50 and 15 <= b.distance_to_conflict <= 60
+        assert 5 <= a.initial_speed <= 10 and 5 <= b.initial_speed <= 10 and 0 <= a.style <= 1
+        nominal = b.distance_to_conflict / b.initial_speed - a.distance_to_conflict / a.initial_speed
+        assert nominal == pytest.approx(inst.arrival_offset) and abs(nominal) <= 2
+        assert ScenarioInstance.from_dict(inst.to_dict()) == inst
+
+
+def test_python_sampler_needs_no_scenic():
+    assert math.isfinite(PythonSampler().sample(0).arrival_offset)
