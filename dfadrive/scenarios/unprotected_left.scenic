@@ -9,6 +9,10 @@ the file does not depend on a particular map or simulator. Any `param` can be fi
 Python (`ScenicSampler(overrides={...})`).
 """
 
+# --- routes: "entry arm:manoeuvre" (arms W, S, E, N)
+param route_A = "W:straight"
+param route_B = "E:left"
+
 # --- intent: which task automaton each agent holds (see dfadrive/tasks.py)
 param task_A = "CROSS"
 param task_B = "YIELD"

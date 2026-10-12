@@ -36,6 +36,7 @@ MAX_ACCEL, MAX_BRAKE = 3.0, 6.0  # m/s^2 commanded at action +1 and -1
 @dataclass(frozen=True)
 class SelfPlayConfig:
     tasks: tuple[tuple[str, str], ...] = (("CROSS", "YIELD"),)  # one pair is drawn per episode
+    scenarios: tuple[str, ...] = ("unprotected_left",)  # one scenario is drawn per episode
     longitudinal_only: bool = True  # policy outputs acceleration; steering follows the route
     horizon_s: float = 40.0
     sampler: str = "auto"
@@ -64,7 +65,11 @@ class SelfPlay:
         self.cfg = cfg or SelfPlayConfig()
         self.env = TaskDrivingEnv(MetaDriveIntersection(), horizon_s=self.cfg.horizon_s)
         self.rng = np.random.default_rng(seed)
-        self.samplers = [make_sampler(self.cfg.sampler, task_A=a, task_B=b) for a, b in self.cfg.tasks]
+        self.samplers = [
+            make_sampler(self.cfg.sampler, scenario, task_A=a, task_B=b)
+            for scenario in self.cfg.scenarios
+            for a, b in self.cfg.tasks
+        ]
         self.reward = RewardModel(self.cfg.reward)
         self.episodes = 0
         self._next_seed = seed

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from dfadrive.metrics import episode_metrics, flatten, summary_table
 from dfadrive.run import make_env, run_episode
-from dfadrive.scenario import make_sampler
+from dfadrive.scenario import SCENARIOS, make_sampler
 from dfadrive.tasks import TASKS
 
 
@@ -24,6 +24,8 @@ def main():
     ap.add_argument("--seeds", type=int, default=20)
     ap.add_argument("--styles", type=float, nargs="+", default=[0.1, 0.9])
     ap.add_argument("--tasks", nargs="+", help="pairs like CROSS:YIELD (default: all nine)")
+    ap.add_argument("--scenario", choices=SCENARIOS, default="unprotected_left")
+    ap.add_argument("--arrival-offset", type=float, help="fix the nominal t_B - t_A at the conflict zone [s]")
     ap.add_argument("--controller", choices=("task", "blind"), default="task")
     ap.add_argument("--sampler", choices=("auto", "scenic", "python"), default="auto")
     ap.add_argument("--save-trajectories", action="store_true")
@@ -35,10 +37,11 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     env, rows, start = make_env(exact=args.exact), [], time.time()
     for (task_a, task_b), style_a, style_b in itertools.product(pairs, args.styles, args.styles):
-        sampler = make_sampler(args.sampler, task_A=task_a, task_B=task_b, style_A=style_a, style_B=style_b)
+        fixed = {} if args.arrival_offset is None else dict(arrival_offset=args.arrival_offset)
+        sampler = make_sampler(args.sampler, args.scenario, task_A=task_a, task_B=task_b, style_A=style_a, style_B=style_b, **fixed)
         for seed in range(args.seeds):
             episode = run_episode(env, sampler.sample(seed), args.controller)
-            rows.append(dict(tasks=f"{task_a}:{task_b}", styles=f"{style_a:g}:{style_b:g}", **flatten(episode_metrics(episode))))
+            rows.append(dict(scenario=args.scenario, tasks=f"{task_a}:{task_b}", styles=f"{style_a:g}:{style_b:g}", **flatten(episode_metrics(episode))))
             if args.save_trajectories:
                 episode.save(out / "episodes" / f"{task_a}-{task_b}_{style_a:g}-{style_b:g}_seed{seed}.npz")
     env.close()
@@ -48,7 +51,7 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     summary = (
-        f"# {args.name}: {len(rows)} episodes, controller = {args.controller}\n\n"
+        f"# {args.name}: {len(rows)} episodes, scenario = {args.scenario}, controller = {args.controller}\n\n"
         f"## By task pair (A:B)\n\n{summary_table(rows, ('tasks',))}\n\n"
         f"## By task pair and style pair (A:B)\n\n{summary_table(rows, ('tasks', 'styles'))}\n"
     )

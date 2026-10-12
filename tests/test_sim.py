@@ -88,3 +88,13 @@ def test_blind_controllers_collide_when_arrivals_coincide(env):
     assert m["collision"] and result == ("rejected", "rejected")
     m, result = outcomes(run_episode(env, inst, "task"))  # same scenario, interactive controllers
     assert not m["collision"] and result == ("accepted", "accepted")
+
+
+def test_probe_scenarios_run_and_the_crossing_zone_is_square(env):
+    pytest.importorskip("scenic")
+    for name in ("tie", "crossing", "standing_start"):
+        inst = make_sampler("scenic", name, task_A="CROSS", task_B="YIELD").sample(0)
+        m, result = outcomes(run_episode(env, inst))
+        assert result == ("accepted", "accepted") and m["first_in_zone"] == "A" and not m["collision"]
+        if name == "crossing":
+            assert env.sim.geometry.zone.area == pytest.approx(3.5 * 3.5, rel=0.02)

@@ -16,6 +16,7 @@ from stable_baselines3.common.logger import configure
 
 from dfadrive.rl.sb3 import OutcomeLogger, SelfPlayVecEnv, make_ppo
 from dfadrive.rl.selfplay import SelfPlayConfig
+from dfadrive.scenario import SCENARIOS
 
 
 def main():
@@ -25,10 +26,15 @@ def main():
     ap.add_argument("--sims", type=int, default=8, help="simulator processes")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tasks", nargs="+", default=["CROSS:YIELD"], help="task pairs A:B, one drawn per episode")
+    ap.add_argument("--scenarios", nargs="+", default=["unprotected_left"], choices=SCENARIOS, help="one drawn per episode")
     ap.add_argument("--full-control", action="store_true", help="policy also steers (default: acceleration only)")
     args = ap.parse_args()
 
-    cfg = SelfPlayConfig(tasks=tuple(tuple(p.split(":")) for p in args.tasks), longitudinal_only=not args.full_control)
+    cfg = SelfPlayConfig(
+        tasks=tuple(tuple(p.split(":")) for p in args.tasks),
+        scenarios=tuple(args.scenarios),
+        longitudinal_only=not args.full_control,
+    )
     out = Path("runs/rl") / args.name
     out.mkdir(parents=True, exist_ok=True)
     env = SelfPlayVecEnv(args.sims, cfg, seed=args.seed)

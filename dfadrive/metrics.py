@@ -43,6 +43,7 @@ def agent_metrics(ep: Episode, agent: str) -> dict:
     accel = np.diff(d["speed"]) / dt
     accel = accel[live[1:]] if live[1:].any() else np.zeros(1)
     approaching = d["dist_to_entry"] > 0
+    free = live & (d["dist_to_clear"] < 0)  # past the zone: only the driver's preference limits speed
     return dict(
         task=ep.meta["instance"]["agents"][agent]["task"],
         style=ep.meta["instance"]["agents"][agent]["style"],
@@ -53,6 +54,7 @@ def agent_metrics(ep: Episode, agent: str) -> dict:
         t_exit=_last(d["own_in_cz"], t),
         t_goal=_first(d["at_goal"], t),
         mean_speed=float(d["speed"][live].mean()),
+        free_speed=float(d["speed"][free].mean()) if free.any() else float("nan"),
         max_accel=float(accel.max()),
         max_decel=float(-accel.min()),
         wait_time=float(((d["speed"] < 0.3) & approaching & live).sum() * dt),

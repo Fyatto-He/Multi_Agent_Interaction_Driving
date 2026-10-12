@@ -19,10 +19,9 @@ from typing import Protocol
 
 import numpy as np
 
-SCENIC_FILE = Path(__file__).parent / "scenarios" / "unprotected_left.scenic"
-
-# Fixed for this scenario: (entry arm, manoeuvre).
-ROUTES = {"A": ("W", "straight"), "B": ("E", "left")}
+SCENARIO_DIR = Path(__file__).parent / "scenarios"
+SCENARIOS = tuple(sorted(f.stem for f in SCENARIO_DIR.glob("*.scenic")))  # one Scenic file each
+BASE = "unprotected_left"
 
 
 @dataclass(frozen=True)
@@ -55,10 +54,10 @@ class Sampler(Protocol):
     def sample(self, seed: int) -> ScenarioInstance: ...
 
 
-def _instance(seed: int, sampler: str, p: dict) -> ScenarioInstance:
+def _instance(name: str, seed: int, sampler: str, p: dict) -> ScenarioInstance:
     agents = {
         k: AgentSpec(
-            route=ROUTES[k],
+            route=tuple(str(p[f"route_{k}"]).split(":")),
             distance_to_conflict=float(p[f"distance_{k}"]),
             initial_speed=float(p[f"speed_{k}"]),
             task=str(p[f"task_{k}"]),
@@ -66,35 +65,40 @@ def _instance(seed: int, sampler: str, p: dict) -> ScenarioInstance:
         )
         for k in ("A", "B")
     }
-    return ScenarioInstance("unprotected_left", seed, sampler, agents, float(p["arrival_offset"]))
+    return ScenarioInstance(name, seed, sampler, agents, float(p["arrival_offset"]))
 
 
 @dataclass
 class ScenicSampler:
-    """Sample instances from the Scenic file. ``overrides`` fixes any of its params."""
+    """Sample instances from a scenario's Scenic file. ``overrides`` fixes any of its params."""
 
     overrides: dict = field(default_factory=dict)
-    path: Path = SCENIC_FILE
+    scenario: str = BASE
 
     def __post_init__(self):
         import scenic  # optional dependency
 
-        self._scenario = scenic.scenarioFromFile(str(self.path), params=dict(self.overrides), mode2D=True)
+        path = SCENARIO_DIR / f"{self.scenario}.scenic"
+        self._scenario = scenic.scenarioFromFile(str(path), params=dict(self.overrides), mode2D=True)
 
     def sample(self, seed: int) -> ScenarioInstance:
         random.seed(seed)  # Scenic draws from Python's and NumPy's global generators
         np.random.seed(seed)
         scene, _ = self._scenario.generate(maxIterations=10_000)
-        return _instance(seed, "scenic", dict(scene.params))
+        return _instance(self.scenario, seed, "scenic", dict(scene.params))
 
 
 @dataclass
 class PythonSampler:
-    """The distribution of the Scenic file, written out by hand (rejection sampling)."""
+    """The base scenario's distribution written out by hand, for machines without Scenic.
+
+    Only ``unprotected_left`` is mirrored here; the style probes exist as Scenic files only.
+    """
 
     overrides: dict = field(default_factory=dict)
 
     DEFAULTS = dict(
+        route_A="W:straight", route_B="E:left",
         task_A="CROSS", task_B="YIELD",
         style_A=(0.0, 1.0), style_B=(0.0, 1.0),
         speed_A=(5.0, 10.0), speed_B=(5.0, 10.0),
@@ -109,16 +113,21 @@ class PythonSampler:
             p = {k: float(rng.uniform(*v)) if isinstance(v, tuple) else v for k, v in spec.items()}
             p["distance_B"] = p["speed_B"] * (p["distance_A"] / p["speed_A"] + p["arrival_offset"])
             if self.DISTANCE_B[0] <= p["distance_B"] <= self.DISTANCE_B[1]:
-                return _instance(seed, "python", p)
+                return _instance(BASE, seed, "python", p)
         raise RuntimeError("no scenario satisfies the constraints")
 
 
-def make_sampler(kind: str = "auto", **overrides) -> Sampler:
+def make_sampler(kind: str = "auto", scenario: str = BASE, **overrides) -> Sampler:
+    """``kind``: "scenic", "python" (base scenario only), or "auto" (Scenic if installed)."""
+    if scenario not in SCENARIOS:
+        raise ValueError(f"unknown scenario {scenario!r}; available: {', '.join(SCENARIOS)}")
     if kind == "python":
+        if scenario != BASE:
+            raise ValueError(f"scenario {scenario!r} needs Scenic; only {BASE!r} has a NumPy sampler")
         return PythonSampler(overrides)
     try:
-        return ScenicSampler(overrides)
+        return ScenicSampler(overrides, scenario)
     except ModuleNotFoundError:
-        if kind == "scenic":
+        if kind == "scenic" or scenario != BASE:
             raise
         return PythonSampler(overrides)

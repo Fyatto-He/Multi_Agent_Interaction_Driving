@@ -39,9 +39,9 @@ class RewardConfig:
     shaping: float = 1.0  # potential per DFA step; neutral in theory, sets how loud progress is
     # Style terms. All are costs; only their weight or threshold depends on style.
     time_cost: tuple[float, float] = (0.005, 0.03)  # per second, at style 0 and at style 1
-    over_speed: float = 0.05  # per second, per unit of relative excess over the style's cruise speed
+    over_speed: float = 0.5  # per second, per unit of relative excess over the style's cruise speed
     over_accel: float = 0.05  # per second, per m/s^2 beyond the style's acceleration / braking limit
-    margin: float = 0.5  # at zone entry, per unit of relative shortfall of the style's time margin
+    margin: float = 1.5  # at zone entry, per unit of relative shortfall of the style's time margin
 
 
 def potential(view: AgentView, cfg: RewardConfig) -> float:

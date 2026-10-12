@@ -70,3 +70,23 @@ def test_sampler_is_deterministic_and_respects_constraints(kind):
 
 def test_python_sampler_needs_no_scenic():
     assert math.isfinite(PythonSampler().sample(0).arrival_offset)
+
+
+def test_every_scenario_file_samples_a_valid_instance():
+    pytest.importorskip("scenic")
+    from dfadrive.scenario import SCENARIOS
+    from dfadrive.tasks import TASKS
+
+    assert {"unprotected_left", "tie", "crossing", "standing_start"} <= set(SCENARIOS)
+    for name in SCENARIOS:
+        sampler = make_sampler("scenic", name)
+        inst = sampler.sample(5)
+        assert inst.name == name and inst == sampler.sample(5)
+        for spec in inst.agents.values():
+            assert spec.route[0] in "WSEN" and spec.route[1] in ("straight", "left", "right")
+            assert spec.task in TASKS and 0 <= spec.style <= 1 and spec.initial_speed >= 0
+    tie = make_sampler("scenic", "tie", style_A=1.0, style_B=0.0).sample(0)
+    assert tie.agents["A"].initial_speed == pytest.approx(11.0) and tie.agents["B"].initial_speed == pytest.approx(6.0)
+    assert abs(tie.arrival_offset) <= 0.3
+    with pytest.raises(ValueError):
+        make_sampler("python", "tie")  # the probes exist as Scenic files only

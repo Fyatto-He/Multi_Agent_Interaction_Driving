@@ -11,13 +11,14 @@ from pathlib import Path
 
 from dfadrive.metrics import episode_metrics
 from dfadrive.run import make_env, run_episode
-from dfadrive.scenario import make_sampler
+from dfadrive.scenario import SCENARIOS, make_sampler
 from dfadrive.tasks import TASKS
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--scenario", choices=SCENARIOS, default="unprotected_left")
     ap.add_argument("--sampler", choices=("auto", "scenic", "python"), default="auto")
     ap.add_argument("--controller", choices=("task", "blind"), default="task")
     ap.add_argument("--task-a", choices=TASKS), ap.add_argument("--task-b", choices=TASKS)
@@ -30,13 +31,14 @@ def main():
     values = (args.task_a, args.task_b, args.style_a, args.style_b, args.arrival_offset)
     overrides = {k: v for k, v in zip(names, values) if v is not None}
 
-    instance = make_sampler(args.sampler, **overrides).sample(args.seed)
+    instance = make_sampler(args.sampler, args.scenario, **overrides).sample(args.seed)
     env = make_env(exact=True)  # a single episode: always bit-for-bit replayable
     episode = run_episode(env, instance, args.controller)
     env.close()
 
     tasks = "-".join(spec.task for spec in instance.agents.values())
-    path = episode.save(args.out / f"{tasks}_{args.controller}_seed{args.seed}.npz")
+    prefix = "" if args.scenario == "unprotected_left" else f"{args.scenario}_"
+    path = episode.save(args.out / f"{prefix}{tasks}_{args.controller}_seed{args.seed}.npz")
     print(json.dumps(episode_metrics(episode), indent=2))
     for agent in episode.agents:
         states, t = episode.data[agent]["dfa_state"], episode.t

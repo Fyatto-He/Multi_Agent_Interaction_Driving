@@ -6,11 +6,15 @@ the pipeline works, not an experiment, and no claim here should be read as a res
 
 **Outcome.** One shared policy learned both roles of `CROSS:YIELD` in about 0.5 M
 agent-steps (4 minutes on a laptop CPU). On 270 held-out scenarios both tasks were
-accepted every time with no collision. Style changes the learned behaviour in the
-intended direction, but the learned policy ignores the style's speed preference, which
-is the main thing to fix next.
+accepted every time with no collision. Style moved the learned behaviour in the intended
+direction but its speed preference was ignored; §5 fixes that, and in doing so exposes
+one situation in which an aggressive yielder violates its task.
 
-Data: [results/rl_smoke/](results/rl_smoke/) (config, training log, per-episode evaluation).
+Data: [results/rl_smoke/](results/rl_smoke/) and [results/rl_style_fix/](results/rl_style_fix/)
+(configs, training logs, per-episode evaluations).
+
+Sections 1–4 describe the first run with its original reward weights (over-speed 0.05,
+margin 0.5). The code defaults are now the weights of §5.
 
 ## 1. What was trained
 
@@ -92,16 +96,10 @@ A has left it:
 
 **Does not show, or shows the opposite**
 
-1. **The style's cruise speed is ignored.** A conservative A averages 12.1 m/s where its
-   style prefers at most 6.5 m/s. The over-speed cost (0.05 per second per unit of
-   relative excess) is small next to what arriving sooner earns through discounting
-   and the time cost. The weights need calibrating before any claim about style is made.
-   A run with the over-speed weight at 0.5 was started and abandoned unfinished: the
-   laptop's throughput had dropped about tenfold (on battery and heavily loaded; cause
-   not investigated). It is the obvious next run.
-2. **Smaller safety margins than the scripted controller.** The smallest gap between A
-   leaving and B entering was 0.8 s. Nothing collided, but the margin term is evidently
-   also too weak.
+1. **The style's cruise speed was ignored** in this run: a conservative A averaged
+   12.1 m/s where its style prefers at most 6.5 m/s. Fixed in §5.
+2. **Gaps were smaller than the style asks for**: 59% of cautious yielders entered with
+   less than their 2.75 s margin. Fixed in §5, at a price described there.
 3. **One seed, one task pair.** `YIELD:CROSS`, `CROSS:CROSS` and the `GO_FIRST` pairs
    were not trained. The contested pairs are where self-play is expected to be hard.
 4. **Easier than the full problem.** Steering was not learned, and the yielding agent's
@@ -114,10 +112,41 @@ occupies its slot with zero observations and zero rewards until the joint episod
 (roughly a fifth of all samples late in training, estimated from the arrival times). This is the usual workaround with a stock PPO; exact
 masking needs a custom implementation (see the D4 table in 02).
 
-## 5. Suggested next steps
+## 5. Reward fix (2026-10-12)
 
-1. Calibrate the style weights (over-speed, margin) so that realised speed and gap track
-   the style parameters; verify with the per-style table above.
+**Change.** Two weights in `RewardConfig`: the over-speed cost 0.05 → 0.5 and the
+margin cost 0.5 → 1.5. Nothing else. The arithmetic behind the first: at γ = 0.995 a
+second saved is worth roughly 0.06–0.08 of reward, so a cost of 0.05 per second for
+driving at double the preferred speed was about break-even, and the policy took it.
+
+**Result.** Same seed, same budget (policy `style_fix`), same 270 held-out scenarios:
+
+| Own style | Target speed | Free-road speed, before → after | Target margin | Yielder's gap below target, before → after |
+|---|---|---|---|---|
+| 0.1 | 6.5 m/s | 12.5 → **6.5** | 2.75 s | 59% → **0%** |
+| 0.5 | 8.5 m/s | 14.2 → **8.4** | 1.75 s | 11% → **3%** |
+| 0.9 | 10.5 m/s | 15.7 → **10.3** | 0.75 s | 0% → 9% |
+
+Free-road speed is the mean speed after the zone, where only preference limits it. Peak
+acceleration stays inside each style's limit (0.9 / 1.3 / 1.8 m/s² against 1.6 / 2.2 / 2.8).
+Training was as fast as before: both roles above 98% acceptance from 0.25 M steps.
+
+**The price.** Both tasks accepted fell from 270/270 to **266/270, with one collision**.
+All four failures are in one cell: A cautious (0.1), B aggressive (0.9), with B due to
+arrive more than a second before A. Now that the cautious A really is slow, the
+aggressive yielder has to wait longer for it, and sometimes enters while A is still in
+the zone. [06_style_probes.md](06_style_probes.md) §3 isolates this: in a tie it never
+happens (270/270); when the yielder would arrive 1.5 s early it happens in 4 of 60
+episodes with an aggressive yielder and in none of 120 otherwise.
+
+So style is now realised as specified, and a real trade-off between task and style has
+become visible at the aggressive end. It is one seed; whether it is a training artefact
+is not known.
+
+## 6. Suggested next steps
+
+1. Find out whether the aggressive-yielder failure in §5 survives more seeds and longer
+   training, and if so whether a larger rejection penalty removes it without flattening style.
 2. Train on all nine task pairs with the task pair sampled per episode, and evaluate each
    pair separately against the prediction table in [03_tasks.md](03_tasks.md).
 3. Several seeds per configuration before reading anything into differences.

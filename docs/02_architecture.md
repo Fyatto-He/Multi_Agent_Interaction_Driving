@@ -117,9 +117,11 @@ Implemented values (`dfadrive/style.py`), linear in `style`:
 | comfortable braking | 2.0 m/s² | 4.5 m/s² |
 | time margin to commit | 3.0 s | 0.5 s |
 
-**What would change this.** The validation run shows the scalar orders who goes first
-only at the extremes (see 04 §4). If mid-range styles need to be distinguishable, split
-into pace and risk (alternative a).
+**What would change this.** In the base scenario the scalar ordered who goes first only
+at the extremes (04 §4). The tie probes (06 §2) show this was the scenario's timing
+noise: with no head start, all three style levels separate. So one scalar stands for
+now. It would change if we need "fast but careful" as a distinct behaviour, which one
+axis cannot express.
 
 ## D4 — First RL formulation — *decided 2026-10-09*
 
@@ -156,6 +158,12 @@ isolated in one place. Results: [05_rl_smoke_test.md](05_rl_smoke_test.md).
 | Discount | 0.995 (about 20 s at 10 Hz) | 0.99 was tried first and failed: see 05 | `RewardConfig.gamma` |
 | Finished agents | An agent that finishes before the other gets `done`; its slot then emits zero observation and zero reward until the joint episode ends | Exact masking of those samples (needs a custom PPO) | `rl/selfplay.py` |
 | Workers | One subprocess per simulator, restarted every 300 episodes | — (MetaDrive: one engine per process, 1.3 MB leaked per reset) | `rl/sb3.py` |
+
+## D5 — More than two cars: what "the other" means — *open*
+
+Needed for the three-car style probes (gap between two priority cars). Options and my
+recommendation (any other car counts; alphabet and DFAs unchanged) are in
+[06_style_probes.md](06_style_probes.md) §5. Nothing is built.
 
 ## Routine decisions
 
