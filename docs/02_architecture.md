@@ -123,12 +123,13 @@ noise: with no head start, all three style levels separate. So one scalar stands
 now. It would change if we need "fast but careful" as a distinct behaviour, which one
 axis cannot express.
 
-## D4 — First RL formulation — *decided 2026-10-09*
+## D4 — First RL formulation — *decided 2026-10-09, vision revised 2026-10-12*
 
 | Question | Decision |
 |---|---|
 | Algorithm | **Parameter-shared independent PPO**, PyTorch, per-agent rewards |
-| What an agent observes about the other | **World state only**: the other's pose and motion, not its task or style |
+| What an agent observes about the other | **Full vision** (revised 2026-10-12; was world state only): the other's state, its task automaton and current task state, its style, and the acceleration it last commanded. World-only remains available as a switch for comparison. See [07_full_vision.md](07_full_vision.md) |
+| Control | **Speed only**; steering follows the route (confirmed 2026-10-12) |
 | Reward | Sparse accept/reject **plus shaping on DFA progress plus a collision term** |
 | How style enters the objective | **A style-dependent reward term** |
 
@@ -151,19 +152,29 @@ isolated in one place. Results: [05_rl_smoke_test.md](05_rl_smoke_test.md).
 | Choice | What | Alternatives | Where |
 |---|---|---|---|
 | PPO implementation | Stable-Baselines3 2.9 | CleanRL-style single file (needed for exact masking or a centralised critic); RLlib (heavy) | `rl/sb3.py` only |
-| Action space | **Acceleration only**; steering follows the route (pure pursuit). `--full-control` makes the policy steer too | Full `[steer, accel]` from the start: the research question is the interaction, which is longitudinal, and steering from scratch mostly teaches lane keeping | `SelfPlayConfig.longitudinal_only` |
-| Action scale | Output +1 = 3 m/s², −1 = −6 m/s² | The simulator's raw throttle/brake, where −0.3 is already an emergency stop | `rl/selfplay.py` |
-| Shaping | Potential-based: `Phi = -w (k - 1 + f)`, `k` = DFA symbols still needed, `f` = remaining fraction of the driving toward the next one | DFA distance alone (three to five reward events per episode: too sparse); MetaDrive's built-in driving reward (not tied to the task) | `rl/reward.py` |
+| Action space | **Speed only**; steering follows the route (pure pursuit). `--full-control` makes the policy steer too (untested) | Full `[steer, accel]` from the start: the research question is the interaction, which is longitudinal, and steering from scratch mostly teaches lane keeping | `SelfPlayConfig.longitudinal_only` |
+| Policy output | **Target speed** (−1 = stand still, +1 = 15 m/s), tracked within +3 / −6 m/s². Changed 2026-10-12 from an acceleration output, with which a policy that had learned to brake could park the car for good (07 §4) | Acceleration output with a penalty on saturated commands | `rl/selfplay.py` |
+| Shaping | Difference of a potential `Phi = -w (k - 1 + f)`, `k` = DFA symbols still needed, `f` = remaining fraction of the driving toward the next one. **Not discounted** since 2026-10-12: the textbook form paid a little on every step spent standing still, and "everyone stops" became a stable solution (07 §4) | DFA distance alone (three to five reward events per episode: too sparse); MetaDrive's built-in driving reward (not tied to the task) | `rl/reward.py` |
 | Style term | Four costs: time (weight grows with style), speed above the style's cruise speed, acceleration/braking beyond the style's limits, and a time-gap shortfall at zone entry measured against the style's margin | Reward-mixing angle (SVO); imitation of the scripted controller | `rl/reward.py` |
 | Discount | 0.995 (about 20 s at 10 Hz) | 0.99 was tried first and failed: see 05 | `RewardConfig.gamma` |
 | Finished agents | An agent that finishes before the other gets `done`; its slot then emits zero observation and zero reward until the joint episode ends | Exact masking of those samples (needs a custom PPO) | `rl/selfplay.py` |
 | Workers | One subprocess per simulator, restarted every 300 episodes | — (MetaDrive: one engine per process, 1.3 MB leaked per reset) | `rl/sb3.py` |
 
-## D5 — More than two cars: what "the other" means — *open*
+## D5 — More than two cars: what "the other" means — *decided 2026-10-12: any other car*
 
-Needed for the three-car style probes (gap between two priority cars). Options and my
-recommendation (any other car counts; alphabet and DFAs unchanged) are in
-[06_style_probes.md](06_style_probes.md) §5. Nothing is built.
+`other_in_cz` is true when any other car is inside a zone it shares with me. The alphabet
+and the three automata are unchanged. `YIELD` therefore means "wait until the first car
+has passed"; what happens after that is left to style. "Yield to everyone" is not
+expressible as a task under this option; it would need one symbol per opponent or one
+monitor per opponent. First use and results: [07_full_vision.md](07_full_vision.md) §3.
+
+### Choices made with full vision — *provisional, mine*
+
+| Choice | What | Alternative |
+|---|---|---|
+| Meaning of "planned move" | The acceleration a car last commanded, plus its task state and style | Published multi-second plans, or simulating the other's policy |
+| How shared state is used | A **shared schedule**: every car computes the same assignment of entry times and holds back only if its slot is later than its arrival; cars whose paths do not cross may go together | Pairwise rules (first version, replaced: it made cars queue behind cars that were themselves waiting) |
+| Priority in the schedule | Cars that cannot stop; then cars whose task requires them to be first; then by *claim* = free-running arrival time plus the style's time margin; ties by agent id | Pure arrival time; or a search for the order with the least total delay (strict priority is worse than world vision in 7% of four-car instances) |
 
 ## Routine decisions
 

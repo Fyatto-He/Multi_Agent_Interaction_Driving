@@ -40,6 +40,7 @@ class ScenarioInstance:
     sampler: str
     agents: dict[str, AgentSpec]
     arrival_offset: float  # s, nominal t_B - t_A at the conflict zone
+    extra: dict = field(default_factory=dict)  # scenario-specific knobs, e.g. headway
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -54,7 +55,12 @@ class Sampler(Protocol):
     def sample(self, seed: int) -> ScenarioInstance: ...
 
 
+_PER_AGENT = ("route", "task", "style", "speed", "distance")
+
+
 def _instance(name: str, seed: int, sampler: str, p: dict) -> ScenarioInstance:
+    """Scenario params -> instance. Agents are whatever names have a ``task_<name>`` param."""
+    names = sorted(k[len("task_") :] for k in p if k.startswith("task_"))
     agents = {
         k: AgentSpec(
             route=tuple(str(p[f"route_{k}"]).split(":")),
@@ -63,9 +69,11 @@ def _instance(name: str, seed: int, sampler: str, p: dict) -> ScenarioInstance:
             task=str(p[f"task_{k}"]),
             style=float(p[f"style_{k}"]),
         )
-        for k in ("A", "B")
+        for k in names
     }
-    return ScenarioInstance(name, seed, sampler, agents, float(p["arrival_offset"]))
+    known = {f"{field}_{k}" for field in _PER_AGENT for k in names} | {"arrival_offset"}
+    extra = {k: float(v) for k, v in p.items() if k not in known and isinstance(v, (int, float))}
+    return ScenarioInstance(name, seed, sampler, agents, float(p["arrival_offset"]), extra)
 
 
 @dataclass

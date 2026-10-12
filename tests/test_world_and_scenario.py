@@ -30,11 +30,11 @@ def test_conflict_zone_of_a_right_angle_crossing():
     assert g.zone.area == pytest.approx(3.5 * 3.5)
     assert g.entry_s["A"] == pytest.approx(48.25) and g.exit_s["A"] == pytest.approx(51.75)
     a_before = car(40, 0, 0.0, routes["A"])
-    assert not g.occupies(a_before) and g.dist_to_entry("A", a_before) == pytest.approx(48.25 - 42.25)
-    assert g.occupies(car(50, 0, 0.0, routes["A"]))
+    assert not g.occupies("A", a_before) and g.dist_to_entry("A", a_before) == pytest.approx(48.25 - 42.25)
+    assert g.occupies("A", car(50, 0, 0.0, routes["A"]))
     a_after = car(56, 0, 0.0, routes["A"])
-    assert not g.occupies(a_after) and g.dist_to_clear("A", a_after) < 0
-    assert not g.occupies(car(50, 0, 0.0, routes["A"], arrived=True))  # an arrived car is gone
+    assert not g.occupies("A", a_after) and g.dist_to_clear("A", a_after) < 0
+    assert not g.occupies("A", car(50, 0, 0.0, routes["A"], arrived=True))  # an arrived car is gone
 
 
 def test_parallel_routes_do_not_conflict():
@@ -90,3 +90,20 @@ def test_every_scenario_file_samples_a_valid_instance():
     assert abs(tie.arrival_offset) <= 0.3
     with pytest.raises(ValueError):
         make_sampler("python", "tie")  # the probes exist as Scenic files only
+
+
+def test_three_cars_two_on_the_same_route():
+    lane = straight((0, 0), (100, 0))
+    routes = {"A1": lane, "A2": straight((0, 0), (100, 0)), "B": straight((50, 50), (50, -50))}
+    g = ConflictGeometry.from_routes(routes)
+    assert g.conflicts("A1", "B") and g.conflicts("A2", "B") and not g.conflicts("A1", "A2")  # same lane: no zone
+    front, back, crossing = car(40, 0, 0.0, lane), car(20, 0, 0.0, lane), car(50, 0, -math.pi / 2, routes["B"])
+    from dfadrive.labels import facts_for
+    from dfadrive.world import WorldState
+
+    world = WorldState(0.0, {"A1": front, "A2": back, "B": crossing})
+    assert g.leader("A2", world) == "A1" and g.leader("A1", world) is None and g.leader("B", world) is None
+    assert facts_for("A1", world, g).other_in_cz and facts_for("B", world, g).own_in_cz
+    in_zone = WorldState(0.0, {"A1": car(50, 0, 0.0, lane), "A2": back, "B": car(50, 30, -math.pi / 2, routes["B"])})
+    assert facts_for("B", in_zone, g).other_in_cz  # any other car in a zone B shares
+    assert not facts_for("A2", in_zone, g).other_in_cz  # A1 ahead in the same lane is not a conflict

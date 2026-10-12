@@ -17,7 +17,9 @@ import numpy as np
 from shapely import affinity
 from shapely.geometry import box
 
+from .controllers import travel_time
 from .recorder import Episode
+from .style import style_params
 from .tasks import ACC, REJ
 
 VEHICLE = (4.515, 1.852)  # length, width; only used for the gap metric
@@ -44,6 +46,13 @@ def agent_metrics(ep: Episode, agent: str) -> dict:
     accel = accel[live[1:]] if live[1:].any() else np.zeros(1)
     approaching = d["dist_to_entry"] > 0
     free = live & (d["dist_to_clear"] < 0)  # past the zone: only the driver's preference limits speed
+    # Delay: time to the goal minus the time this car would need on an empty road, driving
+    # as its style prefers (accelerate to its cruise speed and hold it).
+    style, arrived = ep.meta["instance"]["agents"][agent]["style"], d["at_goal"].astype(bool)
+    delay = float("nan")
+    if arrived.any():
+        p, i = style_params(style), int(np.argmax(arrived))
+        delay = float(t[i]) - travel_time(float(d["s"][i] - d["s"][0]), float(d["speed"][0]), p.cruise_speed, p.max_accel)
     return dict(
         task=ep.meta["instance"]["agents"][agent]["task"],
         style=ep.meta["instance"]["agents"][agent]["style"],
@@ -53,6 +62,7 @@ def agent_metrics(ep: Episode, agent: str) -> dict:
         t_enter=_first(d["own_in_cz"], t),
         t_exit=_last(d["own_in_cz"], t),
         t_goal=_first(d["at_goal"], t),
+        delay=delay,
         mean_speed=float(d["speed"][live].mean()),
         free_speed=float(d["speed"][free].mean()) if free.any() else float("nan"),
         max_accel=float(accel.max()),
@@ -62,35 +72,50 @@ def agent_metrics(ep: Episode, agent: str) -> dict:
 
 
 def episode_metrics(ep: Episode) -> dict:
-    a, b = ep.agents
-    per_agent = {k: agent_metrics(ep, k) for k in (a, b)}
-    enter = {k: m["t_enter"] for k, m in per_agent.items()}
-    entered = {k: v for k, v in enter.items() if not np.isnan(v)}
-    first = min(entered, key=entered.get) if entered else None
-    second = b if first == a else a
+    agents = ep.agents
+    per_agent = {k: agent_metrics(ep, k) for k in agents}
+    entered = sorted((m["t_enter"], k) for k, m in per_agent.items() if not np.isnan(m["t_enter"]))
+    order = [k for _, k in entered]
+    pairs = [(a, b) for i, a in enumerate(agents) for b in agents[i + 1 :]]
+    conflicts = [tuple(c) for c in ep.meta.get("conflicts", pairs)]
 
-    # Post-encroachment time: gap between the first vehicle leaving the conflict zone and
-    # the second entering it. Negative means both were inside at once.
-    pet = float("nan")
-    if first and second in entered:
-        pet = per_agent[second]["t_enter"] - per_agent[first]["t_exit"]
+    # Post-encroachment time: gap between one vehicle leaving a conflict zone and the
+    # next one entering it. Negative means both were inside at once. Smallest over pairs.
+    pets = []
+    for a, b in conflicts:
+        if a in order and b in order:
+            first, second = (a, b) if order.index(a) < order.index(b) else (b, a)
+            pets.append(per_agent[second]["t_enter"] - per_agent[first]["t_exit"])
 
-    both = ep.data[a]["active"].astype(bool) | ep.data[b]["active"].astype(bool)
+    def gap(a: str, b: str, i: int) -> float:
+        fa = _footprint(*(ep.data[a][k][i] for k in ("x", "y", "heading")))
+        return fa.distance(_footprint(*(ep.data[b][k][i] for k in ("x", "y", "heading"))))
+
     gaps = [
-        _footprint(*(ep.data[a][k][i] for k in ("x", "y", "heading"))).distance(
-            _footprint(*(ep.data[b][k][i] for k in ("x", "y", "heading")))
-        )
-        for i in np.flatnonzero(both)
+        gap(a, b, i)
+        for a, b in pairs
+        for i in np.flatnonzero(ep.data[a]["active"].astype(bool) | ep.data[b]["active"].astype(bool))
         if not (ep.data[a]["at_goal"][i] or ep.data[b]["at_goal"][i])
     ]
+    instance = ep.meta["instance"]
     return dict(
-        seed=ep.meta["instance"]["seed"],
-        arrival_offset=ep.meta["instance"]["arrival_offset"],
+        scenario=instance["name"],
+        seed=instance["seed"],
+        arrival_offset=instance["arrival_offset"],
+        **instance.get("extra", {}),
         duration=float(ep.t[-1]),
         timeout=bool(ep.meta.get("timeout", False)),
         collision=any(m["crashed"] for m in per_agent.values()),
-        first_in_zone=first or "",
-        pet=pet,
+        all_accepted=all(m["outcome"] == "accepted" for m in per_agent.values()),
+        # Sums over cars; NaN unless every car reached its goal.
+        total_delay=float(sum(m["delay"] for m in per_agent.values())),
+        max_delay=float(max(m["delay"] for m in per_agent.values())),
+        total_standing=float(sum(m["wait_time"] for m in per_agent.values())),
+        hard_brakes=sum(m["max_decel"] > 4.0 for m in per_agent.values()),
+        clear_time=float(max(m["t_exit"] for m in per_agent.values())),  # last car out of the conflict area
+        first_in_zone=order[0] if order else "",
+        order=">".join(order),
+        pet=float(min(pets)) if pets else float("nan"),
         min_gap=float(min(gaps)) if gaps else float("nan"),
         agents=per_agent,
     )

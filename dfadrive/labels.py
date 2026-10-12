@@ -21,17 +21,17 @@ SYMBOLS = ("crash", "goal", "both", "own", "other", "none")
 class Facts:
     crashed: bool  # this vehicle collided or left the road
     at_goal: bool  # this vehicle reached the end of its route
-    own_in_cz: bool  # this vehicle's footprint overlaps the conflict zone
-    other_in_cz: bool  # the other vehicle's footprint overlaps the conflict zone
+    own_in_cz: bool  # this vehicle's footprint overlaps a conflict zone on its route
+    other_in_cz: bool  # some other vehicle is inside a zone it shares with this one (decision D5)
 
 
 def facts_for(agent: str, world: WorldState, geometry: ConflictGeometry) -> Facts:
-    me, other = world.agents[agent], world.agents[world.other(agent)]
+    me = world.agents[agent]
     return Facts(
         crashed=me.collided or me.off_road,
         at_goal=me.arrived,
-        own_in_cz=geometry.occupies(me),
-        other_in_cz=geometry.occupies(other),
+        own_in_cz=geometry.occupies(agent, me),
+        other_in_cz=any(geometry.blocks(agent, o, world.agents[o]) for o in world.others(agent)),
     )
 
 

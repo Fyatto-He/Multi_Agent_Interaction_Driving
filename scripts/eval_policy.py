@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--scenario", choices=SCENARIOS, default="unprotected_left")
     ap.add_argument("--out", default="eval", help="file stem for the report and CSV next to the model")
     ap.add_argument("--arrival-offset", type=float, help="fix the nominal t_B - t_A at the conflict zone [s]")
+    ap.add_argument("--baseline", choices=("task", "full"), default="task", help="scripted controller to compare with")
     ap.add_argument("--tasks", nargs="+", help="pairs A:B (default: the pairs the model was trained on)")
     ap.add_argument("--styles", type=float, nargs="+", help="fix both styles to each combination (default: sampled)")
     ap.add_argument("--save-episodes", type=int, default=0, help="save this many learned-policy episodes per cell")
@@ -37,7 +38,11 @@ def main():
 
     config = json.loads((args.model.parent / "config.json").read_text())
     pairs = [tuple(p.split(":")) for p in (args.tasks or config["tasks"])]
-    learned = LearnedPolicy(args.model, longitudinal_only=config["selfplay"]["longitudinal_only"])
+    selfplay = config["selfplay"]
+    # Runs saved before these options existed used world vision and acceleration actions.
+    learned = LearnedPolicy(
+        args.model, selfplay["longitudinal_only"], selfplay.get("vision", "world"), selfplay.get("action", "accel")
+    )
     styles = list(itertools.product(args.styles, args.styles)) if args.styles else [(None, None)]
 
     env, rows = make_env(), []
@@ -48,7 +53,7 @@ def main():
         cell = f"{style_a:g}:{style_b:g}" if args.styles else "sampled"
         for k in range(args.seeds):
             instance = sampler.sample(FIRST_SEED + k)
-            for label, controller in (("learned", learned), ("scripted", "task")):
+            for label, controller in (("learned", learned), ("scripted", args.baseline)):
                 episode = run_episode(env, instance, controller)
                 rows.append(dict(policy=label, tasks=f"{task_a}:{task_b}", styles=cell, **flatten(episode_metrics(episode))))
                 if label == "learned" and k < args.save_episodes:

@@ -7,24 +7,31 @@ Research prototype: **multi-agent driving where each vehicle has its own task au
 The DFA says *what* a vehicle must accomplish. The style scalar says *how* it drives.
 The policy (scripted for now, learned later) decides the steering and acceleration.
 
-**Status (2026-10-12).** Four two-car scenarios (the base unprotected left turn and
-three "style probes"), three task DFAs over a six-symbol alphabet, two scripted
-controllers, trajectory logging and metrics, validated on about 2,900 simulated
-episodes. A learned policy (parameter-shared PPO) follows its task and its style on the
-one task pairing it was trained on, with one known failure case. One seed; nothing
-here is a result yet.
+**Start with [REPORT.md](REPORT.md)**: what was read, the setup, and the main experiment,
+a paired comparison of drivers that see only each other's motion with drivers that share
+task state and style.
+
+![four cars, world vision against full vision](docs/figures/demo_four_way.gif)
+
+**Status (2026-10-12).** Seven scenarios with two to four cars, three task DFAs over a
+six-symbol alphabet, scripted drivers with world-only and with full vision, trajectory
+logging and metrics. A learned policy (parameter-shared PPO, speed control) follows its
+task and its style on the one task pairing trained so far. Scripted results rest on
+thousands of paired episodes; learned results on one seed.
 
 ## Read first
 
 | Document | Contents |
 |---|---|
+| [REPORT.md](REPORT.md) | Brief report: reading, setup, the world-vision / full-vision experiment, results, demo |
 | [docs/01_related_work_reuse.md](docs/01_related_work_reuse.md) | What ACC-MARL, DGRM, LTL2Action, DeepLTL, Scenic and MetaDrive actually do, and what we reuse |
 | [docs/02_architecture.md](docs/02_architecture.md) | Architecture and decision log (alternatives, evidence, what would change each decision) |
 | [docs/03_tasks.md](docs/03_tasks.md) | Vocabulary and the three DFAs as transition tables and diagrams (generated from code) |
 | [docs/04_validation.md](docs/04_validation.md) | Scripted-controller results: what succeeds, what fails, and why |
 | [docs/05_rl_smoke_test.md](docs/05_rl_smoke_test.md) | First learned policy: what was trained, what it shows, what it does not |
 | [docs/06_style_probes.md](docs/06_style_probes.md) | Scenarios built to make style show, results on them, further cases, and the open three-car decision |
-| [docs/results/](docs/results/) | The episode tables and training logs behind docs/04–06 |
+| [docs/07_full_vision.md](docs/07_full_vision.md) | Full vision of other cars (scripted and learned), and the three-car gap scene |
+| [docs/results/](docs/results/) | The episode tables and training logs behind docs/04–07 |
 
 ## Setup
 
@@ -43,7 +50,7 @@ reported results, install `requirements.lock.txt` first. MetaDrive fetches its a
 NumPy sampler.
 
 ```bash
-.venv/bin/python -m pytest                # 34 tests, about 6 s
+.venv/bin/python -m pytest                # 40 tests, about 9 s
 .venv/bin/python -m pytest -m "not sim"   # without the simulator
 ```
 
@@ -58,6 +65,16 @@ NumPy sampler.
 
 # negative control: controllers that ignore each other
 .venv/bin/python scripts/run_episode.py --seed 0 --task-a CROSS --task-b CROSS --controller blind
+
+# full vision: every car sees the others' task state, style and latest command
+.venv/bin/python scripts/run_episode.py --scenario standing_start --task-a GO_FIRST --task-b GO_FIRST --controller full
+
+# three cars: does the yielding car take the gap between two priority cars?
+.venv/bin/python scripts/run_gap.py --name gap --seeds 10
+
+# paired comparison of world vision and full vision, and the side-by-side demo
+.venv/bin/python scripts/compare_vision.py --name multi_car --scenarios three_way four_way --seeds 150
+.venv/bin/python scripts/make_demo.py --scenario four_way --seed 1
 
 # figure of a recorded episode
 .venv/bin/python scripts/plot_episode.py runs/episodes/CROSS-YIELD_task_seed0.npz
@@ -93,7 +110,7 @@ dfadrive/
   tasks.py         CROSS, YIELD, GO_FIRST as dfa.DFA; TaskMonitor      (task state)
   style.py         style scalar -> four driving parameters
   policy.py        Policy interface, AgentView, flat observation for networks
-  controllers.py   TaskController (reads its DFA), RouteFollower (blind)
+  controllers.py   TaskController (world vision), FullVisionController, RouteFollower (blind)
   scenario.py      ScenarioInstance; Scenic and NumPy samplers
   scenarios/unprotected_left.scenic
   sim/metadrive_adapter.py   the only module that imports MetaDrive
@@ -103,15 +120,17 @@ dfadrive/
   rl/reward.py     per-agent reward: task outcome, DFA-progress shaping, collision, style
   rl/selfplay.py   one simulator, two learners sharing a policy
   rl/sb3.py        the only module that imports Stable-Baselines3 / PyTorch
-scripts/           run_episode, run_matrix, plot_episode, render_tasks, calibrate_vehicle,
-                   train_ppo, eval_policy, plot_training
+scripts/           run_episode, run_matrix, run_gap, compare_vision, analyze_vision, make_demo,
+                   plot_episode, render_tasks, calibrate_vehicle, train_ppo, eval_policy, plot_training
 tests/
 ```
 
 ## Scenarios and how tasks are assigned
 
 Each scenario is one file in [dfadrive/scenarios/](dfadrive/scenarios/): `unprotected_left`
-(base), and the style probes `tie`, `crossing`, `standing_start` (docs/06). A file
+(base), the style probes `tie`, `crossing`, `standing_start` (docs/06), the three-car
+`gap` (docs/07), and `three_way` and `four_way` with three and four cars arriving together
+(REPORT.md). A file
 declares, per car: its route, its **task**, its style, its start speed and its distance
 to the conflict zone, as fixed values or ranges to sample from.
 
@@ -125,8 +144,10 @@ A task is assigned by name (`CROSS`, `YIELD`, `GO_FIRST`) in that file, e.g.
 or from Python: `make_sampler(scenario="tie", task_A="GO_FIRST", style_B=0.1).sample(seed)`.
 At the start of an episode each car gets a monitor for its own automaton. From then on:
 
-- the car's policy sees **the current state of its own automaton** (for a network: a
-  one-hot over the nine state names), never the task's name and never the other car's task;
+- every car's view holds every car's task state, style and latest command (full vision,
+  docs/07). A policy with `vision="world"` uses only its own task state and the others'
+  physical state; one with `vision="full"` uses all of it. For a network a task state is a
+  one-hot over the nine state names;
 - the scripted controller asks its monitor one question, "would this symbol make my task
   unachievable now?", so it works for any automaton over the alphabet;
 - during training, one task pairing is drawn per episode from the list given to
@@ -146,7 +167,7 @@ At the start of an episode each car gets a monitor for its own automaton. From t
 
 ## Known limits
 
-- Exactly two agents and one conflict zone. Three-car cases are proposed in docs/06, not built.
+- Scripted drivers handle any number of cars; learned policies handle exactly two.
 - The learned policy controls acceleration only (steering follows the route) and has been
   trained on one task pair with one seed; see docs/05 for what that does and does not show.
 - The scripted controller extrapolates the other vehicle at constant speed and does not

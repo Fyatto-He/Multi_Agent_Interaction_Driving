@@ -1,5 +1,9 @@
 # 05 — First learned policy: smoke test
 
+> **Superseded in part (2026-10-12).** The policies here used acceleration outputs, world
+> vision and discounted shaping. All three changed; see [07_full_vision.md](07_full_vision.md) §4.
+> The numbers below stand as a record of those runs.
+
 **Purpose.** Check that the formulation decided in D4 ([02_architecture.md](02_architecture.md))
 produces a usable learning signal. This is one seed on one task pair. It is a check that
 the pipeline works, not an experiment, and no claim here should be read as a result.

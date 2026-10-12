@@ -1,7 +1,7 @@
 """Per-agent reward for learned policies (decision D4, docs/02_architecture.md).
 
     reward = task outcome            +1 on accept, -1 on reject          (sparse, from the DFA)
-           + shaping                 potential-based, on DFA progress    (does not change what is optimal)
+           + shaping                 difference of a potential on DFA progress
            + collision               extra penalty for a crash
            + style                   costs whose weights or thresholds depend on the agent's style
 
@@ -32,7 +32,7 @@ APPROACH = 60.0  # m, distance over which "approaching the zone" is normalised
 
 @dataclass(frozen=True)
 class RewardConfig:
-    gamma: float = 0.995  # must equal the learner's discount for the shaping to be neutral
+    gamma: float = 0.995  # the learner's discount
     accept: float = 1.0
     reject: float = -1.0
     collision: float = -1.0  # in addition to the rejection a crash causes
@@ -57,7 +57,7 @@ def potential(view: AgentView, cfg: RewardConfig) -> float:
         f = min(max(g.dist_to_entry(a, me), 0.0) / APPROACH, 1.0)
     elif "goal" in nxt:  # must reach the end of the route
         f = min(to_goal / (route.length - g.exit_s[a]), 1.0)
-    elif g.occupies(me):  # must get out of the zone
+    elif g.occupies(a, me):  # must get out of the zone
         f = min(max(g.dist_to_clear(a, me), 0.0) / (g.exit_s[a] - g.entry_s[a] + me.length), 1.0)
     else:  # the next symbol is the other agent's to produce
         f = 1.0
@@ -99,7 +99,7 @@ class RewardModel:
                 task=task_reward[a] * (self.cfg.accept if task_reward[a] > 0 else -self.cfg.reject),
                 collision=self.cfg.collision if facts[a].crashed else 0.0,
                 shaping=self._shaping(view, mem, terminal=not me.active),
-                **self._style(view, facts[a], mem, self._mem[view.world.other(a)], entering[a], dt),
+                **self._style(view, facts[a], mem, entering[a], dt),
             )
             mem.speed = me.speed
             out[a] = (sum(terms.values()), terms)
@@ -107,13 +107,19 @@ class RewardModel:
 
     def _shaping(self, view: AgentView, mem: _Memory, terminal: bool) -> float:
         phi = 0.0 if terminal else potential(view, self.cfg)  # a terminal state has no future to shape
-        shaped = self.cfg.gamma * phi - mem.phi
+        # Undiscounted difference on purpose. The textbook form, gamma * phi' - phi, pays a
+        # small positive reward on every step spent standing still (phi is negative), and
+        # "everybody stops" then becomes a stable solution that training can fall into.
+        # This form pays exactly nothing for standing still. The price: it is no longer
+        # strictly neutral, but equal to the neutral form plus a rent of (1 - gamma) * |phi'|
+        # per step, i.e. a mild urgency that grows with the distance left to the task.
+        shaped = phi - mem.phi
         mem.phi = phi
         return shaped
 
-    def _style(self, view, facts: Facts, mem: _Memory, other: _Memory, entering: bool, dt: float) -> dict[str, float]:
+    def _style(self, view: AgentView, facts: Facts, mem: _Memory, entering: bool, dt: float) -> dict[str, float]:
         cfg, p = self.cfg, style_params(view.style)
-        me, ot = view.world.agents[view.agent], view.world.agents[view.world.other(view.agent)]
+        me = view.world.agents[view.agent]
         lo, hi = cfg.time_cost
         accel = (me.speed - mem.speed) / dt
         excess = max(accel - p.max_accel, 0.0) + max(-accel - p.comfort_decel, 0.0)
@@ -124,14 +130,20 @@ class RewardModel:
             margin=0.0,
         )
         if entering:  # the step in which this agent's footprint enters the zone
-            g, ot_id = view.geometry, view.world.other(view.agent)
-            if facts.other_in_cz:
-                gap = 0.0
-            elif other.exit_time is not None:  # following the other: time since it left
-                gap = view.world.t - other.exit_time
-            elif not ot.present:
-                gap = float("inf")
-            else:  # ahead of the other: time until it would arrive at its current speed
-                gap = max(g.dist_to_entry(ot_id, ot), 0.0) / max(ot.speed, 0.1)
+            gap = min(self._gap_to(view, o) for o in view.world.others(view.agent))
             terms["margin"] = -cfg.margin * max(p.commit_margin - gap, 0.0) / p.commit_margin
         return terms
+
+    def _gap_to(self, view: AgentView, other: str) -> float:
+        """Time separating this agent's entry from ``other``'s use of the shared zone."""
+        g, ot, mem = view.geometry, view.world.agents[other], self._mem.get(other)
+        if not g.conflicts(view.agent, other):
+            return float("inf")
+        if g.blocks(view.agent, other, ot):
+            return 0.0
+        if mem is not None and mem.exit_time is not None:  # following it: time since it left
+            return view.world.t - mem.exit_time
+        if not ot.present:
+            return float("inf")
+        # ahead of it: time until it would arrive at its current speed
+        return max(g.dist_to_entry(other, ot), 0.0) / max(ot.speed, 0.1)

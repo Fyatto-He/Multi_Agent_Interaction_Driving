@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from dfadrive.labels import Facts
-from dfadrive.policy import OBS_DIM, AgentView
+from dfadrive.policy import AgentView, obs_dim
 from dfadrive.rl.reward import RewardConfig, RewardModel, potential
 from dfadrive.tasks import TaskMonitor
 from dfadrive.world import AgentState, ConflictGeometry, Route, VehicleLimits, WorldState
@@ -25,7 +25,7 @@ def car(agent, s, speed=5.0, **kw):
 
 def views(t, a, b, tasks, style=0.5):
     world = WorldState(t=t, agents={"A": a, "B": b})
-    return {k: AgentView(k, world, GEOMETRY, tasks[k], style, LIMITS) for k in "AB"}
+    return {k: AgentView(k, world, GEOMETRY, tasks, {"A": style, "B": style}, {"A": 0.0, "B": 0.0}, LIMITS) for k in "AB"}
 
 
 def monitors(a="CROSS", b="YIELD"):
@@ -120,7 +120,7 @@ def test_selfplay_slot_conventions():
 
     sim = SelfPlay(SelfPlayConfig(), seed=0)
     obs = sim.reset()
-    assert obs.shape == (2, OBS_DIM) and obs.dtype == np.float32
+    assert obs.shape == (2, obs_dim("full")) and obs.dtype == np.float32
     finished, padded, episodes = [], 0, sim.episodes
     for _ in range(600):  # full throttle for both: someone arrives or they crash
         obs, rew, done, infos = sim.step(np.ones((2, 1), dtype=np.float32))
@@ -130,10 +130,23 @@ def test_selfplay_slot_conventions():
                 assert rew[i] == 0 and (done[i] or not obs[i].any())
             if "outcome" in info:
                 finished.append(info)
-                assert done[i] and info["terminal_observation"].shape == (OBS_DIM,)
+                assert done[i] and info["terminal_observation"].shape == (obs_dim("full"),)
                 assert info["episode"]["l"] > 0 and set(info["outcome"]["terms"]) >= {"task", "shaping", "collision", "time"}
         if sim.episodes > episodes + 1:
             break
     sim.close()
     assert len(finished) >= 2 and np.isfinite(obs).all()
     assert all(not info["TimeLimit.truncated"] for info in finished)  # they finished, they did not time out
+
+
+def test_speed_and_accel_action_modes():
+    from dfadrive.rl.selfplay import to_action
+
+    tasks = monitors()
+    standing = views(0, car("A", 50, speed=0.0), car("B", 10), tasks)["A"]
+    rolling = views(0, car("A", 50, speed=10.0), car("B", 10), tasks)["A"]
+    go, stop = np.array([1.0]), np.array([-1.0])
+    assert to_action(standing, go, True, "speed")[1] > 0 and to_action(standing, stop, True, "speed")[1] < 0
+    assert to_action(rolling, np.array([0.0]), True, "speed")[1] < 0  # 10 m/s is above the 7.5 m/s asked for
+    assert to_action(rolling, np.array([0.0]), True, "accel")[1] == 0  # in accel mode zero means coast
+    assert obs_dim("full") == 36 and obs_dim("world") == 25

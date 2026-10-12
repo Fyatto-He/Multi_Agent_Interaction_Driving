@@ -23,7 +23,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 
-from ..policy import OBS_DIM, AgentView, flat_observation
+from ..policy import AgentView, flat_observation, obs_dim
 from .selfplay import SelfPlay, SelfPlayConfig, to_action
 
 
@@ -52,7 +52,7 @@ class SelfPlayVecEnv(VecEnv):
         self._procs, self._conns = [None] * n_sims, [None] * n_sims
         for i in range(n_sims):
             self._start(i)
-        observation_space = gym.spaces.Box(-np.inf, np.inf, (OBS_DIM,), np.float32)
+        observation_space = gym.spaces.Box(-np.inf, np.inf, (obs_dim(self.cfg.vision),), np.float32)
         action_space = gym.spaces.Box(-1.0, 1.0, (self.cfg.action_dim,), np.float32)
         super().__init__(2 * n_sims, observation_space, action_space)
 
@@ -142,11 +142,12 @@ def make_ppo(env: SelfPlayVecEnv, seed: int = 0, **overrides) -> PPO:
 class LearnedPolicy:
     """A saved PPO model as a per-agent policy: same interface as the scripted controllers."""
 
-    def __init__(self, path: str | Path, longitudinal_only: bool = True, deterministic: bool = True):
+    def __init__(self, path: str | Path, longitudinal_only=True, vision="full", action="speed", deterministic=True):
         self.model = PPO.load(str(path), device="cpu")
-        self.longitudinal_only, self.deterministic = longitudinal_only, deterministic
+        self.longitudinal_only, self.vision, self.action = longitudinal_only, vision, action
+        self.deterministic = deterministic
         self.name = f"ppo:{Path(path).parent.name}"
 
     def act(self, view: AgentView) -> np.ndarray:
-        raw, _ = self.model.predict(flat_observation(view), deterministic=self.deterministic)
-        return to_action(view, raw, self.longitudinal_only)
+        raw, _ = self.model.predict(flat_observation(view, self.vision), deterministic=self.deterministic)
+        return to_action(view, raw, self.longitudinal_only, self.action)

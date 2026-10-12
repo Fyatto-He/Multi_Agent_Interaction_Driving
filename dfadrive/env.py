@@ -1,7 +1,8 @@
 """Episode loop: simulator -> world facts -> per-agent task state -> policy views.
 
 ``TaskDrivingEnv`` has a small parallel multi-agent interface (dicts keyed by agent id)
-so that the same loop serves scripted controllers now and a learner later.
+so that the same loop serves scripted controllers and learners. Every agent's view holds
+every agent's task monitor, style and latest command (full vision).
 
 Conventions
 - A DFA reads the label of every state reached by a step (not the initial state).
@@ -28,6 +29,7 @@ class TaskDrivingEnv:
         self.horizon_s = horizon_s
         self.instance: ScenarioInstance | None = None
         self.monitors: dict[str, TaskMonitor] = {}
+        self.last_accel: dict[str, float] = {}
         self.world = None
 
     @property
@@ -38,10 +40,15 @@ class TaskDrivingEnv:
         self.instance = instance
         self.world = self.sim.reset(instance)
         self.monitors = {a: TaskMonitor(spec.task) for a, spec in instance.agents.items()}
+        self.last_accel = {a: 0.0 for a in instance.agents}
         return self._views()
 
     def step(self, actions: dict[str, np.ndarray]):
         """Returns (views, rewards, done, info); ``done`` ends the whole episode."""
+        limits = self.sim.limits
+        for a, u in actions.items():  # what each car is doing, in m/s^2, visible to all from the next step
+            scale = limits.accel_per_throttle if u[1] >= 0 else limits.decel_per_brake
+            self.last_accel[a] = float(np.clip(u[1] * scale, -limits.max_decel, limits.accel_per_throttle))
         self.world = self.sim.step(actions)
         geometry = self.sim.geometry
         facts: dict[str, Facts] = {a: facts_for(a, self.world, geometry) for a in self.agents}
@@ -60,13 +67,15 @@ class TaskDrivingEnv:
         self.sim.close()
 
     def _views(self) -> dict[str, AgentView]:
+        styles = {a: spec.style for a, spec in self.instance.agents.items()}
         return {
             a: AgentView(
                 agent=a,
                 world=self.world,
                 geometry=self.sim.geometry,
-                task=self.monitors[a],
-                style=self.instance.agents[a].style,
+                tasks=self.monitors,
+                styles=styles,
+                last_accel=dict(self.last_accel),
                 limits=self.sim.limits,
             )
             for a in self.agents

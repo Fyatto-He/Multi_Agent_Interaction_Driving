@@ -20,7 +20,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--scenario", choices=SCENARIOS, default="unprotected_left")
     ap.add_argument("--sampler", choices=("auto", "scenic", "python"), default="auto")
-    ap.add_argument("--controller", choices=("task", "blind"), default="task")
+    ap.add_argument("--controller", choices=("task", "full", "blind"), default="task")
     ap.add_argument("--task-a", choices=TASKS), ap.add_argument("--task-b", choices=TASKS)
     ap.add_argument("--style-a", type=float), ap.add_argument("--style-b", type=float)
     ap.add_argument("--arrival-offset", type=float, help="nominal t_B - t_A at the conflict zone [s]")

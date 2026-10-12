@@ -14,6 +14,7 @@ from functools import cached_property
 import numpy as np
 from shapely import affinity
 from shapely.geometry import LineString, Point, Polygon, box
+from shapely.ops import unary_union
 
 
 def wrap_angle(a: float) -> float:
@@ -90,9 +91,8 @@ class WorldState:
     t: float
     agents: dict[str, AgentState]
 
-    def other(self, agent: str) -> str:
-        (other,) = (a for a in self.agents if a != agent)
-        return other
+    def others(self, agent: str) -> list[str]:
+        return [a for a in self.agents if a != agent]
 
 
 @dataclass(frozen=True)
@@ -111,34 +111,51 @@ class VehicleLimits:
 
 @dataclass(frozen=True, eq=False)
 class ConflictGeometry:
-    """Static geometry of a two-agent conflict: both routes and the zone they share.
+    """Static geometry of the conflicts between any number of routes.
 
-    The conflict zone is the overlap of the two lane corridors. It is derived from route
-    geometry alone, so it means the same thing in any simulator.
+    Two routes that cross share a *conflict zone*: the overlap of their lane corridors.
+    Two cars on the same route share no zone; they follow each other. Everything is
+    derived from route geometry alone, so it means the same thing in any simulator.
+
+    Each agent has one stretch of conflict along its own route, from ``entry_s`` to
+    ``exit_s``: the union of the zones it takes part in.
     """
 
     routes: dict[str, Route]
-    zone: Polygon
-    entry_s: dict[str, float]  # arclength at which each route's lane first reaches the zone
+    zones: dict[frozenset, Polygon]  # {a, b} -> zone, for crossing pairs only
+    own_zone: dict[str, Polygon]  # union of the zones each agent takes part in
+    entry_s: dict[str, float]  # arclength at which each route's lane first reaches its zone
     exit_s: dict[str, float]  # ... and at which it has fully left it
 
     @classmethod
     def from_routes(cls, routes: dict[str, Route]) -> "ConflictGeometry":
-        if len(routes) != 2:
-            raise ValueError("this prototype handles exactly two agents")
-        a, b = routes.values()
-        overlap = a.corridor.intersection(b.corridor)
-        parts = [g for g in getattr(overlap, "geoms", [overlap]) if g.geom_type == "Polygon"]
-        if not parts or max(p.area for p in parts) < 1.0:
-            raise ValueError("the two routes do not conflict")
-        zone = max(parts, key=lambda p: p.area)
-        # Project the whole zone, not just the centreline crossing: the zone is skewed when
-        # the routes cross obliquely, and a lane-wide vehicle meets its corner first.
-        entry, exit_ = {}, {}
+        names, zones = list(routes), {}
+        for i, a in enumerate(names):
+            for b in names[i + 1 :]:
+                if _same_lane(routes[a], routes[b]):
+                    continue
+                overlap = routes[a].corridor.intersection(routes[b].corridor)
+                parts = [g for g in getattr(overlap, "geoms", [overlap]) if g.geom_type == "Polygon"]
+                if parts and max(p.area for p in parts) >= 1.0:
+                    zones[frozenset((a, b))] = max(parts, key=lambda p: p.area)
+        if not zones:
+            raise ValueError("the routes do not conflict")
+        own, entry, exit_ = {}, {}, {}
         for name, route in routes.items():
-            ss = [route.project(x, y) for x, y in zone.exterior.coords]
+            mine = [z for pair, z in zones.items() if name in pair]
+            if not mine:
+                raise ValueError(f"agent {name} conflicts with nobody")
+            own[name] = unary_union(mine)
+            # Project the whole zone, not just the centreline crossing: a zone is skewed
+            # when routes cross obliquely, and a lane-wide vehicle meets its corner first.
+            ss = [route.project(x, y) for z in mine for x, y in z.exterior.coords]
             entry[name], exit_[name] = min(ss), max(ss)
-        return cls(routes=dict(routes), zone=zone, entry_s=entry, exit_s=exit_)
+        return cls(routes=dict(routes), zones=zones, own_zone=own, entry_s=entry, exit_s=exit_)
+
+    @cached_property
+    def zone(self) -> Polygon:
+        """All zones together, for drawing."""
+        return unary_union(list(self.zones.values())).convex_hull
 
     def dist_to_entry(self, agent: str, state: AgentState) -> float:
         """Front bumper to zone entry along the route; negative once the front is past it."""
@@ -148,6 +165,28 @@ class ConflictGeometry:
         """Rear bumper to zone exit along the route; negative once the vehicle has cleared."""
         return self.exit_s[agent] - (state.s - state.length / 2)
 
-    def occupies(self, state: AgentState) -> bool:
-        """Does the vehicle's footprint overlap the conflict zone?"""
-        return state.present and state.footprint().intersects(self.zone)
+    def occupies(self, agent: str, state: AgentState) -> bool:
+        """Does this agent's footprint overlap a conflict zone of its own?"""
+        return state.present and state.footprint().intersects(self.own_zone[agent])
+
+    def conflicts(self, a: str, b: str) -> bool:
+        return frozenset((a, b)) in self.zones
+
+    def blocks(self, agent: str, other: str, other_state: AgentState) -> bool:
+        """Is ``other`` inside the zone it shares with ``agent``?"""
+        zone = self.zones.get(frozenset((agent, other)))
+        return zone is not None and other_state.present and other_state.footprint().intersects(zone)
+
+    def leader(self, agent: str, world: WorldState) -> str | None:
+        """The nearest car ahead of ``agent`` on the same route, if any."""
+        me, best = world.agents[agent], None
+        for other in world.others(agent):
+            st = world.agents[other]
+            if st.present and _same_lane(self.routes[agent], self.routes[other]) and st.s > me.s:
+                if best is None or st.s < world.agents[best].s:
+                    best = other
+        return best
+
+
+def _same_lane(a: Route, b: Route) -> bool:
+    return a is b or (a.points.shape == b.points.shape and bool(np.allclose(a.points, b.points)))

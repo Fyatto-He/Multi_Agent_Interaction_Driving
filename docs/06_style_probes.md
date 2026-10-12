@@ -5,9 +5,10 @@ so most episodes are decided by who happens to be ahead. Style only matters when
 situation is genuinely contested. These probes remove the head start so that the task
 and the style are the only things left to decide the outcome.
 
-**Status.** Three two-car probes are implemented and run (§1–§3). Cases that need a third
-car are brainstormed and one is proposed (§4–§5); they are **not built**, because they
-change what the automata read, which is a decision for you (§5).
+**Status.** Three two-car probes are implemented and run (§1–§3) with the world-vision
+drivers. Cases that need a third car are brainstormed (§4); the first one (§5) has since
+been decided and built, and the same probes have been re-run with full vision:
+[07_full_vision.md](07_full_vision.md).
 
 Data: [results/probes/](results/probes/), [results/rl_style_fix/](results/rl_style_fix/).
 
@@ -133,7 +134,7 @@ Grouped by what they need. "Reveals" is what a difference between styles would l
 | Right-of-way rule as a monitor | "priority car approaching" is a distance threshold, i.e. a new fact |
 | Merge into the same exit lane | the conflict is a shared lane, not a zone to cross |
 
-## 5. Proposal for the first three-car case — *needs your decision*
+## 5. Proposal for the first three-car case — *decided 2026-10-12: option A; built, see 07 §3*
 
 **Case.** Gap between two priority cars: A1 and A2 go straight in the same lane, B turns
 left across them and holds `YIELD`.

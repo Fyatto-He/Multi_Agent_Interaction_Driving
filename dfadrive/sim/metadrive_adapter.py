@@ -78,7 +78,7 @@ class MetaDriveIntersection:
 
     def reset(self, instance: ScenarioInstance) -> WorldState:
         self._names = {name: f"agent{i}" for i, name in enumerate(instance.agents)}
-        if self.exact:
+        if self.exact or (self._env is not None and len(instance.agents) != self._env.config["num_agents"]):
             self.close()
         if self._env is None:
             self._build(instance)

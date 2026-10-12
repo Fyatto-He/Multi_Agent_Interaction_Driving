@@ -15,7 +15,8 @@ from pathlib import Path
 from stable_baselines3.common.logger import configure
 
 from dfadrive.rl.sb3 import OutcomeLogger, SelfPlayVecEnv, make_ppo
-from dfadrive.rl.selfplay import SelfPlayConfig
+from dfadrive.policy import VISIONS
+from dfadrive.rl.selfplay import ACTIONS, SelfPlayConfig
 from dfadrive.scenario import SCENARIOS
 
 
@@ -27,6 +28,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tasks", nargs="+", default=["CROSS:YIELD"], help="task pairs A:B, one drawn per episode")
     ap.add_argument("--scenarios", nargs="+", default=["unprotected_left"], choices=SCENARIOS, help="one drawn per episode")
+    ap.add_argument("--vision", choices=VISIONS, default="full", help="what the policy sees of the other car")
+    ap.add_argument("--action", choices=ACTIONS, default="speed", help="policy output: target speed or acceleration")
     ap.add_argument("--full-control", action="store_true", help="policy also steers (default: acceleration only)")
     args = ap.parse_args()
 
@@ -34,6 +37,8 @@ def main():
         tasks=tuple(tuple(p.split(":")) for p in args.tasks),
         scenarios=tuple(args.scenarios),
         longitudinal_only=not args.full_control,
+        vision=args.vision,
+        action=args.action,
     )
     out = Path("runs/rl") / args.name
     out.mkdir(parents=True, exist_ok=True)

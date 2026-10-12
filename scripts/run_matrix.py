@@ -26,7 +26,7 @@ def main():
     ap.add_argument("--tasks", nargs="+", help="pairs like CROSS:YIELD (default: all nine)")
     ap.add_argument("--scenario", choices=SCENARIOS, default="unprotected_left")
     ap.add_argument("--arrival-offset", type=float, help="fix the nominal t_B - t_A at the conflict zone [s]")
-    ap.add_argument("--controller", choices=("task", "blind"), default="task")
+    ap.add_argument("--controller", choices=("task", "full", "blind"), default="task")
     ap.add_argument("--sampler", choices=("auto", "scenic", "python"), default="auto")
     ap.add_argument("--save-trajectories", action="store_true")
     ap.add_argument("--exact", action="store_true", help="fresh simulator per episode; leaks memory, only for short runs")
@@ -41,7 +41,7 @@ def main():
         sampler = make_sampler(args.sampler, args.scenario, task_A=task_a, task_B=task_b, style_A=style_a, style_B=style_b, **fixed)
         for seed in range(args.seeds):
             episode = run_episode(env, sampler.sample(seed), args.controller)
-            rows.append(dict(scenario=args.scenario, tasks=f"{task_a}:{task_b}", styles=f"{style_a:g}:{style_b:g}", **flatten(episode_metrics(episode))))
+            rows.append(dict(tasks=f"{task_a}:{task_b}", styles=f"{style_a:g}:{style_b:g}", **flatten(episode_metrics(episode))))
             if args.save_trajectories:
                 episode.save(out / "episodes" / f"{task_a}-{task_b}_{style_a:g}-{style_b:g}_seed{seed}.npz")
     env.close()

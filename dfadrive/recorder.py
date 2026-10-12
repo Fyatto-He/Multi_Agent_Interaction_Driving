@@ -78,6 +78,7 @@ class Recorder:
             dt=dt,
             versions=_versions(),
             zone=[list(c) for c in geometry.zone.exterior.coords],
+            conflicts=sorted(sorted(pair) for pair in geometry.zones),
             routes={a: r.points.round(3).tolist() for a, r in geometry.routes.items()},
             lane_width={a: r.lane_width for a, r in geometry.routes.items()},
         )
