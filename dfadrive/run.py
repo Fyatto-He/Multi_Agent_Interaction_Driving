@@ -14,10 +14,11 @@ def make_env(horizon_s: float = 40.0, exact: bool = False) -> TaskDrivingEnv:
     return TaskDrivingEnv(MetaDriveIntersection(exact=exact), horizon_s=horizon_s)
 
 
-def run_episode(env: TaskDrivingEnv, instance: ScenarioInstance, controllers: str | dict[str, str] = "task") -> Episode:
-    """``controllers`` names an entry of ``CONTROLLERS`` for all agents, or one per agent."""
-    kinds = {a: controllers if isinstance(controllers, str) else controllers[a] for a in instance.agents}
-    policies = {a: CONTROLLERS[kind]() for a, kind in kinds.items()}
+def run_episode(env: TaskDrivingEnv, instance: ScenarioInstance, controllers="task") -> Episode:
+    """``controllers``: a name from ``CONTROLLERS`` or a policy object, for all agents or one per agent."""
+    chosen = {a: controllers[a] if isinstance(controllers, dict) else controllers for a in instance.agents}
+    policies = {a: CONTROLLERS[c]() if isinstance(c, str) else c for a, c in chosen.items()}
+    kinds = {a: c if isinstance(c, str) else getattr(c, "name", type(c).__name__) for a, c in chosen.items()}
 
     views = env.reset(instance)
     recorder = Recorder(instance, kinds, env.sim.dt, env.sim.geometry)

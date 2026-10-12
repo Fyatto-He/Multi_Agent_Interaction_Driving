@@ -1,0 +1,35 @@
+{
+  "selfplay": {
+    "tasks": [
+      [
+        "CROSS",
+        "YIELD"
+      ]
+    ],
+    "longitudinal_only": true,
+    "horizon_s": 40.0,
+    "sampler": "auto",
+    "reward": {
+      "gamma": 0.995,
+      "accept": 1.0,
+      "reject": -1.0,
+      "collision": -1.0,
+      "shaping": 1.0,
+      "time_cost": [
+        0.005,
+        0.03
+      ],
+      "over_speed": 0.05,
+      "over_accel": 0.05,
+      "margin": 0.5
+    }
+  },
+  "name": "smoke",
+  "steps": 1000000,
+  "sims": 8,
+  "seed": 0,
+  "tasks": [
+    "CROSS:YIELD"
+  ],
+  "full_control": false
+}

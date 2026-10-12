@@ -9,39 +9,13 @@ Writes runs/<name>/episodes.csv (one row per episode) and runs/<name>/summary.md
 import argparse
 import csv
 import itertools
-import math
 import time
-from collections import Counter
 from pathlib import Path
 
-from dfadrive.metrics import episode_metrics, flatten
+from dfadrive.metrics import episode_metrics, flatten, summary_table
 from dfadrive.run import make_env, run_episode
 from dfadrive.scenario import make_sampler
 from dfadrive.tasks import TASKS
-
-
-def summarise(rows: list[dict], by: tuple[str, ...]) -> str:
-    groups: dict[tuple, list[dict]] = {}
-    for r in rows:
-        groups.setdefault(tuple(r[k] for k in by), []).append(r)
-    pct = lambda xs: f"{100 * sum(xs) / len(xs):.0f}%"
-    head = [*by, "n", "both accepted", "A outcome", "B outcome", "collision", "timeout", "A first", "median PET [s]", "min gap [m]"]
-    lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
-    for key, g in groups.items():
-        outcome = lambda agent: ", ".join(f"{k} {v}" for k, v in Counter(r[f"{agent}_outcome"] for r in g).most_common())
-        pets = sorted(r["pet"] for r in g if not math.isnan(r["pet"]))
-        gaps = [r["min_gap"] for r in g if not math.isnan(r["min_gap"])]
-        entered = [r for r in g if r["first_in_zone"]]
-        lines.append("| " + " | ".join([
-            *map(str, key), str(len(g)),
-            pct([r["A_outcome"] == r["B_outcome"] == "accepted" for r in g]),
-            outcome("A"), outcome("B"),
-            pct([r["collision"] for r in g]), pct([r["timeout"] for r in g]),
-            pct([r["first_in_zone"] == "A" for r in entered]) if entered else "–",
-            f"{pets[len(pets) // 2]:.1f}" if pets else "–",
-            f"{min(gaps):.2f}" if gaps else "–",
-        ]) + " |")  # fmt: skip
-    return "\n".join(lines)
 
 
 def main():
@@ -75,8 +49,8 @@ def main():
         writer.writerows(rows)
     summary = (
         f"# {args.name}: {len(rows)} episodes, controller = {args.controller}\n\n"
-        f"## By task pair (A:B)\n\n{summarise(rows, ('tasks',))}\n\n"
-        f"## By task pair and style pair (A:B)\n\n{summarise(rows, ('tasks', 'styles'))}\n"
+        f"## By task pair (A:B)\n\n{summary_table(rows, ('tasks',))}\n\n"
+        f"## By task pair and style pair (A:B)\n\n{summary_table(rows, ('tasks', 'styles'))}\n"
     )
     (out / "summary.md").write_text(summary)
     print(summary)

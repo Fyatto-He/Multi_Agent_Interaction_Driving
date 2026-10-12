@@ -10,6 +10,9 @@ Realised style (per agent) mean speed, peak acceleration and braking, time spent
 
 from __future__ import annotations
 
+import math
+from collections import Counter
+
 import numpy as np
 from shapely import affinity
 from shapely.geometry import box
@@ -97,3 +100,28 @@ def flatten(m: dict) -> dict:
     for agent, am in m["agents"].items():
         row.update({f"{agent}_{k}": v for k, v in am.items()})
     return row
+
+
+def summary_table(rows: list[dict], by: tuple[str, ...]) -> str:
+    """Markdown table of outcomes, grouping flattened episode rows by the columns in ``by``."""
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(tuple(r[k] for k in by), []).append(r)
+    pct = lambda xs: f"{100 * sum(xs) / len(xs):.0f}%"
+    head = [*by, "n", "both accepted", "A outcome", "B outcome", "collision", "timeout", "A first", "median PET [s]", "min gap [m]"]
+    lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for key, g in groups.items():
+        outcome = lambda agent: ", ".join(f"{k} {v}" for k, v in Counter(r[f"{agent}_outcome"] for r in g).most_common())
+        pets = sorted(r["pet"] for r in g if not math.isnan(r["pet"]))
+        gaps = [r["min_gap"] for r in g if not math.isnan(r["min_gap"])]
+        entered = [r for r in g if r["first_in_zone"]]
+        lines.append("| " + " | ".join([
+            *map(str, key), str(len(g)),
+            pct([r["A_outcome"] == r["B_outcome"] == "accepted" for r in g]),
+            outcome("A"), outcome("B"),
+            pct([r["collision"] for r in g]), pct([r["timeout"] for r in g]),
+            pct([r["first_in_zone"] == "A" for r in entered]) if entered else "–",
+            f"{pets[len(pets) // 2]:.1f}" if pets else "–",
+            f"{min(gaps):.2f}" if gaps else "–",
+        ]) + " |")  # fmt: skip
+    return "\n".join(lines)

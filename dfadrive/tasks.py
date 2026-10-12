@@ -151,7 +151,16 @@ class TaskMonitor:
 
     @property
     def remaining(self) -> int | None:
+        """Fewest symbols still needed to accept; ``None`` once the task is lost."""
         return self.task.distance_to_accept.get(self.state)
+
+    @property
+    def next_symbols(self) -> frozenset[str]:
+        """Symbols that bring acceptance one step closer from the current state."""
+        dist, row = self.task.distance_to_accept, self.task.table[self.state]
+        if not self.alive or dist[self.state] == 0:
+            return frozenset()
+        return frozenset(sym for sym, nxt in row.items() if dist.get(nxt) == dist[self.state] - 1)
 
 
 # ---------------------------------------------------------------------------- rendering

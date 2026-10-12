@@ -121,32 +121,41 @@ Implemented values (`dfadrive/style.py`), linear in `style`:
 only at the extremes (see 04 §4). If mid-range styles need to be distinguishable, split
 into pace and risk (alternative a).
 
-## D4 — First RL formulation — *open*
+## D4 — First RL formulation — *decided 2026-10-09*
 
-Preliminary view, so it can be challenged early: **parameter-shared independent PPO**,
-continuous actions, observation = full world state in the ego frame ⊕ own DFA state ⊕
-style, **per-agent** reward (not team-`min`), PyTorch.
+| Question | Decision |
+|---|---|
+| Algorithm | **Parameter-shared independent PPO**, PyTorch, per-agent rewards |
+| What an agent observes about the other | **World state only**: the other's pose and motion, not its task or style |
+| Reward | Sparse accept/reject **plus shaping on DFA progress plus a collision term** |
+| How style enters the objective | **A style-dependent reward term** |
 
-- It is what ACC-MARL uses, minus the JAX loop that MetaDrive cannot support.
-- Under full observability each agent's value function already sees the joint state, so
-  MAPPO's centralised critic adds little at n = 2; and MAPPO presumes a shared reward,
-  which our mixed-motive tasks do not have.
-- Throughput is CPU-bound (physics), so the RTX 4080 Super is not the bottleneck;
-  vectorise over processes. MetaDrive allows one engine per process, so vectorising
-  means subprocesses.
+Why this and not the alternatives (MAPPO with a centralised critic; ACC-MARL's full
+layout where every agent sees all DFAs; single-agent PPO against a scripted opponent):
+it is what ACC-MARL uses, minus the JAX loop MetaDrive cannot support; with full
+observability and two agents a centralised critic adds little; and MAPPO presumes a
+shared reward, which contested tasks do not have.
 
-Alternatives: (a) MAPPO with a centralised critic that also sees the other agent's task
-and style; (b) ACC-MARL's layout in full, i.e. every agent observes all agents' DFAs
-through RAD embeddings; (c) single-agent PPO against the scripted controller as a fixed
-opponent, as a first sanity step before self-play.
+**What would change this.** More agents or partial observability (then a centralised
+critic earns its keep); training over a distribution of tasks (then RAD embeddings
+replace the one-hot DFA state, and whether to show the other's DFA becomes a live
+question again); learned policies failing to coordinate where the scripted ones do.
 
-Open sub-questions that belong to this decision:
-1. Does an agent observe the other's task and style (ACC-MARL: yes for tasks), or only
-   the world state (what the scripted controllers get)?
-2. Reward: sparse accept/reject only, or plus potential-based shaping on
-   `TaskMonitor.remaining` (ACC-MARL's choice), plus what collision/comfort terms.
-3. How style enters the objective. As an observation alone it has no effect; it needs a
-   style-dependent reward term or imitation of the scripted controller.
+### Choices made inside D4 — *provisional, mine, cheap to reverse*
+
+These were needed to run anything and were not part of your four answers. Each is
+isolated in one place. Results: [05_rl_smoke_test.md](05_rl_smoke_test.md).
+
+| Choice | What | Alternatives | Where |
+|---|---|---|---|
+| PPO implementation | Stable-Baselines3 2.9 | CleanRL-style single file (needed for exact masking or a centralised critic); RLlib (heavy) | `rl/sb3.py` only |
+| Action space | **Acceleration only**; steering follows the route (pure pursuit). `--full-control` makes the policy steer too | Full `[steer, accel]` from the start: the research question is the interaction, which is longitudinal, and steering from scratch mostly teaches lane keeping | `SelfPlayConfig.longitudinal_only` |
+| Action scale | Output +1 = 3 m/s², −1 = −6 m/s² | The simulator's raw throttle/brake, where −0.3 is already an emergency stop | `rl/selfplay.py` |
+| Shaping | Potential-based: `Phi = -w (k - 1 + f)`, `k` = DFA symbols still needed, `f` = remaining fraction of the driving toward the next one | DFA distance alone (three to five reward events per episode: too sparse); MetaDrive's built-in driving reward (not tied to the task) | `rl/reward.py` |
+| Style term | Four costs: time (weight grows with style), speed above the style's cruise speed, acceleration/braking beyond the style's limits, and a time-gap shortfall at zone entry measured against the style's margin | Reward-mixing angle (SVO); imitation of the scripted controller | `rl/reward.py` |
+| Discount | 0.995 (about 20 s at 10 Hz) | 0.99 was tried first and failed: see 05 | `RewardConfig.gamma` |
+| Finished agents | An agent that finishes before the other gets `done`; its slot then emits zero observation and zero reward until the joint episode ends | Exact masking of those samples (needs a custom PPO) | `rl/selfplay.py` |
+| Workers | One subprocess per simulator, restarted every 300 episodes | — (MetaDrive: one engine per process, 1.3 MB leaked per reset) | `rl/sb3.py` |
 
 ## Routine decisions
 
@@ -159,7 +168,7 @@ Open sub-questions that belong to this decision:
 | Time step | 0.1 s decision, 0.02 s physics (MetaDrive default) | Same as Scenic's MetaDrive default; enough for 10 m/s approach speeds | faster dynamics |
 | Stop logic, gap acceptance | hand-written in `controllers.py` (~120 lines) | MetaDrive's `IDMPolicy` handles only a leader in the same lane and needs engine internals; ours is a pure function of the policy view | we need a stronger scripted opponent |
 | Environment location | venv in `~/.venvs/dfa-drive`, symlinked as `.venv` | `~/Desktop` is Drive-synced; a 1 GB venv would be uploaded and native libraries can misload | project moves off the Desktop |
-| RL framework family | PyTorch (when we get there) | Env is not JAX-jittable; CUDA PyTorch works on both Linux and Windows, JAX-on-GPU does not on native Windows | env replaced by a JAX simulator |
+| RL framework family | PyTorch | Env is not JAX-jittable; CUDA PyTorch works on both Linux and Windows, JAX-on-GPU does not on native Windows | env replaced by a JAX simulator |
 
 ## Uncertainties I am not resolving silently
 

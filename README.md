@@ -7,10 +7,11 @@ Research prototype: **multi-agent driving where each vehicle has its own task au
 The DFA says *what* a vehicle must accomplish. The style scalar says *how* it drives.
 The policy (scripted for now, learned later) decides the steering and acceleration.
 
-**Status (2026-10-08).** One scenario (unprotected left turn, two vehicles), three task
+**Status (2026-10-09).** One scenario (unprotected left turn, two vehicles), three task
 DFAs over a six-symbol alphabet, two scripted controllers, trajectory logging and
-metrics, validated on 1,800 simulated episodes. No policy has been trained; the
-interface for one is in place and the algorithm choice is the next open decision.
+metrics, validated on 1,800 simulated episodes. A first learned policy
+(parameter-shared PPO) passes a smoke test on one task pair; nothing beyond that has
+been trained, and the style reward weights are not calibrated yet.
 
 ## Read first
 
@@ -20,7 +21,8 @@ interface for one is in place and the algorithm choice is the next open decision
 | [docs/02_architecture.md](docs/02_architecture.md) | Architecture and decision log (alternatives, evidence, what would change each decision) |
 | [docs/03_tasks.md](docs/03_tasks.md) | Vocabulary and the three DFAs as transition tables and diagrams (generated from code) |
 | [docs/04_validation.md](docs/04_validation.md) | Scripted-controller results: what succeeds, what fails, and why |
-| [docs/results/](docs/results/) | The episode tables behind docs/04 |
+| [docs/05_rl_smoke_test.md](docs/05_rl_smoke_test.md) | First learned policy: what was trained, what it shows, what it does not |
+| [docs/results/](docs/results/) | The episode tables and training logs behind docs/04 and docs/05 |
 
 ## Setup
 
@@ -29,7 +31,7 @@ Python 3.11 is required (MetaDrive does not support 3.12 yet).
 ```bash
 python3.11 -m venv ~/.venvs/dfa-drive
 ln -s ~/.venvs/dfa-drive .venv
-.venv/bin/pip install -e ".[scenic,viz,dev]"
+.venv/bin/pip install -e ".[scenic,viz,dev,rl]"
 ```
 
 The venv lives outside the project because this folder is cloud-synced; on another
@@ -39,7 +41,7 @@ reported results, install `requirements.lock.txt` first. MetaDrive fetches its a
 NumPy sampler.
 
 ```bash
-.venv/bin/python -m pytest                # 24 tests, about 5 s
+.venv/bin/python -m pytest                # 32 tests, about 6 s
 .venv/bin/python -m pytest -m "not sim"   # without the simulator
 ```
 
@@ -64,6 +66,22 @@ NumPy sampler.
 
 ![Example episode](docs/figures/CROSS-YIELD_task_seed0.png)
 
+## Train
+
+```bash
+# one shared PPO policy for both agents, self-play, A = CROSS and B = YIELD (about 4 min on 8 cores)
+.venv/bin/python scripts/train_ppo.py --name smoke --steps 1000000
+
+# held-out evaluation next to the scripted controller, with the same metrics
+.venv/bin/python scripts/eval_policy.py runs/rl/smoke/model.zip --seeds 30 --styles 0.1 0.5 0.9
+
+# learning curves
+.venv/bin/python scripts/plot_training.py runs/rl/smoke --out runs/rl/smoke/training.png
+```
+
+The `rl` extra installs CPU PyTorch. On the CUDA machine install the matching PyTorch
+build first; the simulator is CPU-bound, so the GPU matters little at this network size.
+
 ## Layout
 
 ```
@@ -80,7 +98,11 @@ dfadrive/
   env.py           episode loop: simulator -> facts -> DFAs -> policy views
   recorder.py      one .npz per episode, metadata included
   metrics.py       task outcome, order, post-encroachment time, realised style
-scripts/           run_episode, run_matrix, plot_episode, render_tasks, calibrate_vehicle
+  rl/reward.py     per-agent reward: task outcome, DFA-progress shaping, collision, style
+  rl/selfplay.py   one simulator, two learners sharing a policy
+  rl/sb3.py        the only module that imports Stable-Baselines3 / PyTorch
+scripts/           run_episode, run_matrix, plot_episode, render_tasks, calibrate_vehicle,
+                   train_ppo, eval_policy, plot_training
 tests/
 ```
 
@@ -107,6 +129,8 @@ Python: `make_sampler(task_B="GO_FIRST", style_A=0.9, arrival_offset=0.0).sample
 ## Known limits
 
 - Exactly two agents and one conflict zone.
+- The learned policy controls acceleration only (steering follows the route) and has been
+  trained on one task pair with one seed; see docs/05 for what that does and does not show.
 - The scripted controller extrapolates the other vehicle at constant speed and does not
   know its task or style.
 - "Aggressive" and "conservative" are one axis; the validation shows where that is too coarse.
